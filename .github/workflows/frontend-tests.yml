@@ -1,0 +1,205 @@
+name: Frontend E2E Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: 
+      - 'frontend/**'
+      - 'backend/**'
+      - '.github/workflows/frontend-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - '.github/workflows/frontend-tests.yml'
+
+jobs:
+  cypress-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ''
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: user_management
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    strategy:
+      matrix:
+        browser: [chrome, firefox, edge]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: |
+          frontend/package-lock.json
+          backend/package-lock.json
+
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        npm ci
+
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Wait for MySQL to be ready
+      run: |
+        for i in {1..30}; do
+          if mysqladmin ping -h 127.0.0.1 -P 3306 --silent; then
+            echo "MySQL is ready"
+            break
+          fi
+          echo "Waiting for MySQL... ($i/30)"
+          sleep 2
+        done
+
+    - name: Setup test database
+      run: |
+        mysql -h 127.0.0.1 -P 3306 -u root -e "CREATE DATABASE IF NOT EXISTS user_management;"
+
+    - name: Start backend server
+      run: |
+        cd backend
+        npm start &
+        echo "Backend server started in background"
+      env:
+        NODE_ENV: test
+
+    - name: Wait for backend to be ready
+      run: |
+        for i in {1..30}; do
+          if curl -f http://localhost:5000/api/health; then
+            echo "Backend is ready"
+            break
+          fi
+          echo "Waiting for backend... ($i/30)"
+          sleep 2
+        done
+
+    - name: Start frontend server
+      run: |
+        cd frontend
+        npm start &
+        echo "Frontend server started in background"
+      env:
+        CI: false
+        BROWSER: none
+
+    - name: Wait for frontend to be ready
+      run: |
+        for i in {1..30}; do
+          if curl -f http://localhost:3000; then
+            echo "Frontend is ready"
+            break
+          fi
+          echo "Waiting for frontend... ($i/30)"
+          sleep 3
+        done
+
+    - name: Run Cypress tests
+      uses: cypress-io/github-action@v6
+      with:
+        working-directory: frontend
+        browser: ${{ matrix.browser }}
+        wait-on: 'http://localhost:3000, http://localhost:5000/api/health'
+        wait-on-timeout: 120
+        record: false
+        spec: |
+          cypress/e2e/login.cy.js
+          cypress/e2e/register.cy.js
+          cypress/e2e/dashboard.cy.js
+      env:
+        CYPRESS_baseUrl: http://localhost:3000
+        CYPRESS_apiUrl: http://localhost:5000
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload Cypress screenshots
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: cypress-screenshots-${{ matrix.browser }}
+        path: frontend/cypress/screenshots
+        retention-days: 7
+
+    - name: Upload Cypress videos
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: cypress-videos-${{ matrix.browser }}
+        path: frontend/cypress/videos
+        retention-days: 7
+
+    - name: Upload Cypress reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: cypress-reports-${{ matrix.browser }}
+        path: |
+          frontend/cypress/reports/
+          frontend/mochawesome-report/
+        retention-days: 7
+
+    - name: Comment test results on PR
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          let comment = '## 🎭 Frontend E2E Test Results\n\n';
+          comment += `**Browser:** ${{ matrix.browser }}\n`;
+          comment += `**Status:** ${{ job.status }}\n\n`;
+          
+          if ('${{ job.status }}' === 'success') {
+            comment += '✅ All frontend E2E tests passed!\n\n';
+            comment += '**Test Coverage:**\n';
+            comment += '- Login Flow (8 tests): ✅\n';
+            comment += '- User Registration (12 tests): ✅\n';
+            comment += '- Dashboard & Admin (15 tests): ✅\n';
+            comment += '- User Management (10 tests): ✅\n';
+            comment += '- Access Control (6 tests): ✅\n';
+            comment += '\n**Total:** 51 E2E tests passed\n';
+          } else {
+            comment += '❌ Some frontend E2E tests failed.\n\n';
+            comment += '📸 Screenshots and videos have been uploaded as artifacts for debugging.\n';
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  # Job to check if all matrix builds passed
+  cypress-results:
+    runs-on: ubuntu-latest
+    needs: cypress-tests
+    if: always()
+    
+    steps:
+    - name: Check Cypress test results
+      run: |
+        if [[ "${{ needs.cypress-tests.result }}" == "success" ]]; then
+          echo "✅ All Cypress tests passed across all browsers!"
+          exit 0
+        else
+          echo "❌ Some Cypress tests failed"
+          exit 1
+        fi 

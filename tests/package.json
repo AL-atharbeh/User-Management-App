@@ -1,0 +1,31 @@
+{
+  "name": "user-management-api-tests",
+  "version": "1.0.0",
+  "description": "API integration tests for User Management App",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:verbose": "jest --verbose"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "supertest": "^6.3.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "**/*.js",
+      "!**/node_modules/**",
+      "!**/coverage/**"
+    ],
+    "testMatch": [
+      "**/*.test.js"
+    ],
+    "testTimeout": 30000,
+    "setupFilesAfterEnv": [],
+    "verbose": true,
+    "forceExit": true
+  }
+} 

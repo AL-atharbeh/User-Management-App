@@ -1,0 +1,27 @@
+{
+  "name": "user-management-app",
+  "version": "1.0.0",
+  "description": "A full-stack user management application with React frontend and Node.js backend",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "cd frontend && npm start",
+    "dev:backend": "cd backend && npm run dev",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "build": "cd frontend && npm run build",
+    "start": "cd backend && npm start"
+  },
+  "keywords": [
+    "react",
+    "nodejs",
+    "user-management",
+    "fullstack"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "chai": "^5.2.1",
+    "concurrently": "^8.2.2",
+    "mocha": "^11.7.1",
+    "supertest": "^7.1.4"
+  }
+}

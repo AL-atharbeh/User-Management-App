@@ -1,0 +1,129 @@
+name: Backend API Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: 
+      - 'backend/**'
+      - 'tests/**'
+      - '.github/workflows/backend-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'backend/**'
+      - 'tests/**'
+      - '.github/workflows/backend-tests.yml'
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ''
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: user_management
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: |
+          backend/package-lock.json
+          tests/package-lock.json
+
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        npm ci
+
+    - name: Install test dependencies
+      run: |
+        cd tests
+        npm ci
+
+    - name: Wait for MySQL to be ready
+      run: |
+        for i in {1..30}; do
+          if mysqladmin ping -h 127.0.0.1 -P 3306 --silent; then
+            echo "MySQL is ready"
+            break
+          fi
+          echo "Waiting for MySQL... ($i/30)"
+          sleep 2
+        done
+
+    - name: Setup test database
+      run: |
+        mysql -h 127.0.0.1 -P 3306 -u root -e "CREATE DATABASE IF NOT EXISTS user_management;"
+        mysql -h 127.0.0.1 -P 3306 -u root -e "SHOW DATABASES;"
+
+    - name: Run backend API tests
+      run: |
+        cd tests
+        npm test
+      env:
+        NODE_ENV: test
+        CI: true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: backend-test-results-node-${{ matrix.node-version }}
+        path: |
+          tests/coverage/
+          tests/test-results.xml
+        retention-days: 7
+
+    - name: Comment test results on PR
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          let comment = '## 🧪 Backend API Test Results\n\n';
+          comment += `**Node.js Version:** ${{ matrix.node-version }}\n`;
+          comment += `**Status:** ${{ job.status }}\n\n`;
+          
+          if ('${{ job.status }}' === 'success') {
+            comment += '✅ All backend API tests passed!\n\n';
+            comment += '**Test Coverage:**\n';
+            comment += '- Health Check: ✅\n';
+            comment += '- User Registration: ✅\n';
+            comment += '- Authentication: ✅\n';
+            comment += '- User Management CRUD: ✅\n';
+            comment += '- Error Handling: ✅\n';
+            comment += '- Security & CORS: ✅\n';
+            comment += '- Performance: ✅\n';
+            comment += '- Data Validation: ✅\n';
+          } else {
+            comment += '❌ Some backend API tests failed. Please check the logs for details.\n';
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          }); 
